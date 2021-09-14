@@ -247,7 +247,7 @@ class ShortDeckPokerState:
         Parameters
         ----------
         lut_path : str
-            Path to lookupkup table.
+            Path to lookup table.
         pickle_dir : bool
             Whether the lut_path is a path to pickle files or not. Pickle files
             are deprecated for the lut.

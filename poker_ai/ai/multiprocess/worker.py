@@ -49,6 +49,10 @@ class Worker(mp.Process):
         self._dump_iteration = dump_iteration
         self._save_path = Path(save_path)
         self._info_set_lut: state.InfoSetLookupTable = info_set_lut
+
+        self._status_queue.cancel_join_thread()
+        self._logging_queue.cancel_join_thread()
+
         self._setup_new_game()
 
     def run(self):
@@ -63,6 +67,7 @@ class Worker(mp.Process):
             self._update_status("idle")
             name, kwargs = self._job_queue.get(block=True)
             if name == "terminate":
+                self._job_queue.task_done()
                 break
             elif name == "cfr":
                 function = self._cfr

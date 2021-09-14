@@ -1,6 +1,7 @@
 import logging
 import multiprocessing as mp
 import os
+import queue
 import time
 from pathlib import Path
 from typing import Dict, Optional, Union
@@ -13,7 +14,6 @@ from poker_ai.games.short_deck import state
 from poker_ai.ai.multiprocess.worker import Worker
 
 log = logging.getLogger("sync.server")
-manager = mp.Manager()
 
 
 class Server:
@@ -64,6 +64,8 @@ class Server:
             lut_path, pickle_dir
         )
         log.info("Loaded lookup table.")
+        if os.environ.get("TESTING_SUITE"):
+            n_processes = 4
         self._job_queue: mp.JoinableQueue = mp.JoinableQueue(maxsize=n_processes)
         self._status_queue: mp.Queue = mp.Queue()
         self._logging_queue: mp.Queue = mp.Queue()
@@ -72,8 +74,6 @@ class Server:
         self._locks: Dict[str, mp.synchronize.Lock] = dict(
             regret=mp.Lock(), strategy=mp.Lock(), pre_flop_strategy=mp.Lock()
         )
-        if os.environ.get("TESTING_SUITE"):
-            n_processes = 4
         self._workers: Dict[str, Worker] = self._start_workers(n_processes)
 
     def search(self):
@@ -93,8 +93,11 @@ class Server:
         for t in range(self._start_timestep, self._n_iterations + 1):
             # Log any messages from the worker in this master process to avoid
             # weirdness with tqdm.
+
             while not self._logging_queue.empty():
-                log.info(self._logging_queue.get())
+                # log.info(self._logging_queue.get())
+                self._logging_queue.get()
+
             # Optimise for each player's position.
             for i in range(self._n_players):
                 if t > self._update_threshold and t % self._strategy_interval == 0:
@@ -124,14 +127,34 @@ class Server:
             # Ensure all workers are idle.
             self._wait_until_all_workers_are_idle()
         # Send the terminate command to all workers.
-        for _ in self._workers.values():
-            name = "terminate"
+        for name, _ in self._workers.items():
             kwargs = dict()
-            self._job_queue.put((name, kwargs), block=True)
-            log.info("sending sentinel to worker")
+            self._job_queue.put(("terminate", kwargs), block=True)
+            log.info(f"sending sentinel to worker {name}")
+        log.info("done sending sentinel to all workers")
+
+        try:
+            while True:
+                log.info("logging: " + self._logging_queue.get_nowait())
+        except queue.Empty:
+            pass
+        self._logging_queue.close()
+        self._logging_queue.join_thread()
+
+        try:
+            while True:
+                n, s = self._status_queue.get_nowait()
+                log.info(f"{n} status : {s}")
+        except queue.Empty:
+            pass
+        self._status_queue.close()
+        self._logging_queue.join_thread()
+
         for name, worker in self._workers.items():
+            log.info(f"joining worker {name}.")
             worker.join()
             log.info(f"worker {name} joined.")
+        log.info("done joining all workers")
 
     def to_dict(self) -> Dict[str, Union[str, float, int, None]]:
         """Serialise the server object to save the progress of optimisation."""
